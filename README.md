@@ -91,24 +91,44 @@ src/
 
 ## How it works
 
-```
-Every 5 min (configurable)
-       │
-       ▼
-  readState() ──── S3: STATE_BUCKET/STATE_KEY ──► { lastRunTimestamp }
-       │
-       ▼
-  ListObjectsV2(SOURCE_BUCKET, SOURCE_PREFIX)  [paginated]
-       │
-       ▼
-  Filter: obj.LastModified > lastRunTimestamp
-       │
-       ▼
-  CopyObject → DEST_BUCKET/DEST_PREFIX  (SSE-AES256)
-  (AccessDenied per file → skip + log, not fatal)
-       │
-       ▼
-  writeState() ──► { lastRunTimestamp: <job start time>, filesProcessed }
+```mermaid
+sequenceDiagram
+    participant Cron as node-cron<br/>(every 5 min)
+    participant Job as copyJob
+    participant StateS3 as S3<br/>STATE_BUCKET
+    participant SrcS3 as S3<br/>SOURCE_BUCKET
+    participant DstS3 as S3<br/>DEST_BUCKET
+
+    Cron->>Job: tick (noOverlap: true)
+
+    Job->>StateS3: GetObject(STATE_KEY)
+    alt state file exists
+        StateS3-->>Job: { lastRunTimestamp }
+    else NoSuchKey (first run)
+        StateS3-->>Job: default → epoch (copy all)
+    end
+
+    Job->>SrcS3: ListObjectsV2(prefix) [paginated]
+    SrcS3-->>Job: objects[]
+
+    loop for each object
+        alt LastModified > lastRunTimestamp
+            alt key is safe (no path traversal)
+                Job->>DstS3: CopyObject(SSE-AES256)
+                alt AccessDenied
+                    DstS3-->>Job: skip + warn log
+                else success
+                    DstS3-->>Job: ETag
+                end
+            else unsafe key
+                Job-->>Job: skip + warn log
+            end
+        else file not modified
+            Job-->>Job: skip
+        end
+    end
+
+    Job->>StateS3: PutObject(STATE_KEY, SSE-AES256)<br/>{ lastRunTimestamp: jobStartTime, filesProcessed }
 ```
 
 On the first run (no state file), `lastRunTimestamp` defaults to the Unix epoch so all existing objects are copied.
