@@ -2,11 +2,11 @@
 
 A Node.js/TypeScript Docker service that syncs files between configurable storage backends on a cron schedule. Only files modified after the last recorded run are transferred — state is persisted so the service survives container restarts.
 
-Supported backends: **AWS S3** and **FTP/FTPS**. Any combination works: S3→S3, S3→FTP, FTP→S3, FTP→FTP.
+Supported backends: **AWS S3**, **FTP/FTPS**, and **local filesystem folders**. Any combination works: S3→S3, FTP→S3, local→S3, S3→local, local→local, etc.
 
 ## Features
 
-- **Multi-backend sync** — source and destination are independently configured as S3 or FTP
+- **Multi-backend sync** — source and destination are independently configured as S3, FTP, or local folder
 - **Time-based filtering** — compares each file's `LastModified` against a persisted last-run timestamp
 - **Flexible state storage** — sync state can be kept in S3 or a local JSON file
 - **Provider Pattern** — new backends register themselves; no changes needed in core sync logic
@@ -35,8 +35,8 @@ npm run dev
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `SOURCE_TYPE` | | `s3` | Source backend: `s3` or `ftp` |
-| `DEST_TYPE` | | `s3` | Destination backend: `s3` or `ftp` |
+| `SOURCE_TYPE` | | `s3` | Source backend: `s3`, `ftp`, or `local` |
+| `DEST_TYPE` | | `s3` | Destination backend: `s3`, `ftp`, or `local` |
 | `STATE_TYPE` | | `s3` | State store backend: `s3` or `file` |
 | `CRON_SCHEDULE` | | `*/5 * * * *` | cron expression for the sync interval |
 | `LOG_LEVEL` | | `info` | `trace` / `debug` / `info` / `warn` / `error` / `fatal` |
@@ -84,6 +84,18 @@ npm run dev
 ### FTP destination (`DEST_TYPE=ftp`)
 
 Same variables as FTP source with `DEST_` prefix.
+
+### Local folder source (`SOURCE_TYPE=local`)
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `SOURCE_LOCAL_PATH` | ✅ | — | Absolute or relative path to the source directory |
+
+### Local folder destination (`DEST_TYPE=local`)
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DEST_LOCAL_PATH` | ✅ | — | Absolute or relative path to the destination directory |
 
 ### S3 state store (`STATE_TYPE=s3`)
 
@@ -146,6 +158,18 @@ DEST_FTP_PASSWORD=secret
 DEST_FTP_BASE_PATH=/processed
 ```
 
+**local folder → local folder**:
+```env
+SOURCE_TYPE=local
+SOURCE_LOCAL_PATH=/mnt/data/incoming
+
+DEST_TYPE=local
+DEST_LOCAL_PATH=/mnt/data/processed
+
+STATE_TYPE=file
+STATE_FILE_PATH=./sync-state.json
+```
+
 ## npm scripts
 
 | Script | Description |
@@ -190,13 +214,22 @@ src/
     storageProviderFactory.ts   StorageProviderFactory registry — createStorageProvider(cfg)
     s3Provider.ts               S3StorageProvider
     ftpProvider.ts              FtpStorageProvider (basic-ftp)
+    localProvider.ts            LocalStorageProvider (fs/promises)
   stateStore/
     s3StateStore.ts             S3StateStore
     fileStateStore.ts           FileStateStore (fs/promises)
+  schemas/
+    index.ts                    Re-exports all schemas + types
+    s3ProviderSchema.ts         Zod schema for S3 provider
+    ftpProviderSchema.ts        Zod schema for FTP provider
+    localProviderSchema.ts      Zod schema for local folder provider
+    s3StateSchema.ts            Zod schema for S3 state store
+    fileStateSchema.ts          Zod schema for file state store
   __tests__/
-    config.test.ts        Schema validation incl. FTP + file-state combinations
-    stateManager.test.ts  S3StateStore and FileStateStore with mocks
-    copyJob.test.ts       Core sync logic via mock StorageProvider / StateStore
+    config.test.ts              Schema validation incl. FTP + file-state combinations
+    stateManager.test.ts        S3StateStore and FileStateStore with mocks
+    copyJob.test.ts             Core sync logic via mock StorageProvider / StateStore
+    localProvider.test.ts       LocalStorageProvider with mocked fs/promises
 ```
 
 ## How it works
@@ -213,9 +246,9 @@ sequenceDiagram
 
     Note over Index,Factory: startup — build providers from env config
     Index->>Factory: createStorageProvider(sourceCfg)
-    Factory-->>Index: StorageProvider (S3 | FTP)
+    Factory-->>Index: StorageProvider (S3 | FTP | local)
     Index->>Factory: createStorageProvider(destCfg)
-    Factory-->>Index: StorageProvider (S3 | FTP)
+    Factory-->>Index: StorageProvider (S3 | FTP | local)
     Index->>Factory: createStateStore(stateCfg)
     Factory-->>Index: StateStore (S3 | file)
 
