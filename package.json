@@ -1,0 +1,32 @@
+{
+  "name": "s3-sync-cron",
+  "version": "1.0.0",
+  "description": "Time-based S3-to-S3 file sync cron service",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^4.5.0",
+    "pino": "^9.2.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@vitest/coverage-v8": "^3.2.6",
+    "pino-pretty": "^11.2.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.4.5",
+    "vitest": "^3.2.6"
+  }
+}
