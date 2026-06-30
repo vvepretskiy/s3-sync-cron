@@ -1,26 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SyncState } from '../types';
+import type { FileEntry, StateStore, StorageProvider, SyncState } from '../types';
 
-const { mockSend } = vi.hoisted(() => ({ mockSend: vi.fn() }));
-const { mockReadState, mockWriteState } = vi.hoisted(() => ({
-  mockReadState: vi.fn<() => Promise<SyncState>>(),
-  mockWriteState: vi.fn<(s: SyncState) => Promise<void>>(),
-}));
-
-vi.mock('../s3Client', () => ({ s3Client: { send: mockSend } }));
-vi.mock('../stateManager', () => ({ readState: mockReadState, writeState: mockWriteState }));
 vi.mock('../logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), fatal: vi.fn() },
-}));
-vi.mock('../config', () => ({
-  config: {
-    sourceBucket: 'src-bucket',
-    sourcePrefix: 'incoming/',
-    destBucket: 'dst-bucket',
-    destPrefix: 'processed/',
-    stateBucket: 'state-bucket',
-    stateKey: 's3-sync-cron/state.json',
-  },
 }));
 
 import { runCopyJob } from '../copyJob';
@@ -32,111 +14,111 @@ const EPOCH_STATE: SyncState = {
   lastRunAt: new Date(0).toISOString(),
 };
 
+function makeSource(files: FileEntry[] = []): StorageProvider {
+  return {
+    async *listFiles(_since: Date) {
+      for (const f of files) yield f;
+    },
+    getFile: vi.fn().mockResolvedValue(Buffer.from('content')),
+    putFile: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function makeDest(): StorageProvider {
+  return {
+    async *listFiles(_since: Date) { /* unused */ },
+    getFile: vi.fn(),
+    putFile: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function makeStateStore(state: SyncState = EPOCH_STATE): StateStore {
+  return {
+    readState: vi.fn().mockResolvedValue(state),
+    writeState: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe('runCopyJob', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockWriteState.mockResolvedValue(undefined);
-  });
+  // ── basic copy behaviour ───────────────────────────────────────────────────────────────
 
-  // ── time-based filtering ────────────────────────────────────────────────────
+  it('copies all files yielded by the source provider', async () => {
+    const files: FileEntry[] = [
+      { key: 'a.txt', lastModified: new Date() },
+      { key: 'b.txt', lastModified: new Date() },
+    ];
+    const source = makeSource(files);
+    const dest = makeDest();
+    const stateStore = makeStateStore();
 
-  it('copies files modified after lastRunTimestamp and skips older ones', async () => {
-    const lastRun = new Date('2026-06-01T10:00:00.000Z');
-    mockReadState.mockResolvedValueOnce({
-      ...EPOCH_STATE,
-      lastRunTimestamp: lastRun.toISOString(),
-    });
-
-    mockSend
-      .mockResolvedValueOnce({
-        Contents: [
-          { Key: 'incoming/old.txt', LastModified: new Date('2026-06-01T09:00:00.000Z') },
-          { Key: 'incoming/new.txt', LastModified: new Date('2026-06-01T11:00:00.000Z') },
-        ],
-        IsTruncated: false,
-      })
-      .mockResolvedValueOnce({}); // CopyObject for new.txt
-
-    const result = await runCopyJob();
-
-    expect(result.copied).toBe(1);
-    expect(result.skipped).toBe(1);
-    expect(result.failed).toBe(0);
-    expect(mockWriteState).toHaveBeenCalledOnce();
-  });
-
-  it('copies all files on first run (epoch state)', async () => {
-    mockReadState.mockResolvedValueOnce(EPOCH_STATE);
-
-    mockSend
-      .mockResolvedValueOnce({
-        Contents: [
-          { Key: 'incoming/a.txt', LastModified: new Date('2020-01-01T00:00:00.000Z') },
-          { Key: 'incoming/b.txt', LastModified: new Date('2020-01-02T00:00:00.000Z') },
-        ],
-        IsTruncated: false,
-      })
-      .mockResolvedValueOnce({}) // CopyObject a.txt
-      .mockResolvedValueOnce({}); // CopyObject b.txt
-
-    const result = await runCopyJob();
+    const result = await runCopyJob(source, dest, stateStore);
 
     expect(result.copied).toBe(2);
     expect(result.skipped).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(dest.putFile).toHaveBeenCalledTimes(2);
+    expect(stateStore.writeState).toHaveBeenCalledOnce();
   });
 
-  // ── security: key validation ────────────────────────────────────────────────
+  it('copies nothing when the source yields no files', async () => {
+    const result = await runCopyJob(makeSource([]), makeDest(), makeStateStore());
+    expect(result.copied).toBe(0);
+  });
 
-  it('skips objects with path-traversal keys', async () => {
-    mockReadState.mockResolvedValueOnce(EPOCH_STATE);
+  // ── security: key validation ───────────────────────────────────────────────────────────
 
-    mockSend
-      .mockResolvedValueOnce({
-        Contents: [
-          { Key: '../../../etc/passwd', LastModified: new Date() },
-          { Key: 'incoming/safe.txt', LastModified: new Date() },
-        ],
-        IsTruncated: false,
-      })
-      .mockResolvedValueOnce({}); // CopyObject for safe.txt only
+  it('skips files with path-traversal keys', async () => {
+    const files: FileEntry[] = [
+      { key: '../../etc/passwd', lastModified: new Date() },
+      { key: 'safe.txt', lastModified: new Date() },
+    ];
+    const source = makeSource(files);
+    const dest = makeDest();
 
-    const result = await runCopyJob();
+    const result = await runCopyJob(source, dest, makeStateStore());
 
     expect(result.copied).toBe(1);
-    expect(result.skipped).toBe(1); // path-traversal key was skipped
+    expect(result.skipped).toBe(1);
+    expect(dest.putFile).toHaveBeenCalledOnce();
+    expect(dest.putFile).toHaveBeenCalledWith('safe.txt', expect.any(Buffer));
   });
 
-  // ── error handling ──────────────────────────────────────────────────────────
+  // ── error handling ───────────────────────────────────────────────────────────────
 
   it('skips AccessDenied files, counts them as failed, and continues', async () => {
-    mockReadState.mockResolvedValueOnce(EPOCH_STATE);
+    const files: FileEntry[] = [
+      { key: 'denied.txt', lastModified: new Date() },
+      { key: 'allowed.txt', lastModified: new Date() },
+    ];
+    const source: StorageProvider = {
+      async *listFiles(_since: Date) {
+        for (const f of files) yield f;
+      },
+      getFile: vi
+        .fn()
+        .mockRejectedValueOnce(Object.assign(new Error('AccessDenied'), { name: 'AccessDenied' }))
+        .mockResolvedValueOnce(Buffer.from('ok')),
+      putFile: vi.fn().mockResolvedValue(undefined),
+    };
+    const dest = makeDest();
+    const stateStore = makeStateStore();
 
-    mockSend
-      .mockResolvedValueOnce({
-        Contents: [
-          { Key: 'incoming/denied.txt', LastModified: new Date() },
-          { Key: 'incoming/allowed.txt', LastModified: new Date() },
-        ],
-        IsTruncated: false,
-      })
-      .mockRejectedValueOnce(
-        Object.assign(new Error('AccessDenied'), { name: 'AccessDenied' }),
-      )
-      .mockResolvedValueOnce({}); // CopyObject for allowed.txt
-
-    const result = await runCopyJob();
+    const result = await runCopyJob(source, dest, stateStore);
 
     expect(result.copied).toBe(1);
     expect(result.failed).toBe(1);
-    expect(result.failedKeys).toContain('incoming/denied.txt');
-    expect(mockWriteState).toHaveBeenCalledOnce();
+    expect(result.failedKeys).toContain('denied.txt');
+    expect(stateStore.writeState).toHaveBeenCalledOnce();
   });
 
-  it('calls process.exit(1) when the source bucket does not exist', async () => {
-    mockReadState.mockResolvedValueOnce(EPOCH_STATE);
-    mockSend.mockRejectedValueOnce(
-      Object.assign(new Error('NoSuchBucket'), { name: 'NoSuchBucket' }),
-    );
+  it('calls process.exit(1) when the source throws NoSuchBucket', async () => {
+    const source: StorageProvider = {
+      async *listFiles(_since: Date) {
+        throw Object.assign(new Error('NoSuchBucket'), { name: 'NoSuchBucket' });
+      },
+      getFile: vi.fn(),
+      putFile: vi.fn(),
+    };
 
     const exitSpy = vi
       .spyOn(process, 'exit')
@@ -144,55 +126,41 @@ describe('runCopyJob', () => {
         throw new Error('process.exit called');
       });
 
-    await expect(runCopyJob()).rejects.toThrow('process.exit called');
+    await expect(runCopyJob(source, makeDest(), makeStateStore())).rejects.toThrow(
+      'process.exit called',
+    );
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
   });
 
-  // ── pagination ──────────────────────────────────────────────────────────────
+  it('re-throws unexpected errors from dest.putFile', async () => {
+    const source = makeSource([{ key: 'file.txt', lastModified: new Date() }]);
+    const dest: StorageProvider = {
+      async *listFiles(_since: Date) { /* unused */ },
+      getFile: vi.fn(),
+      putFile: vi.fn().mockRejectedValue(new Error('NetworkError')),
+    };
 
-  it('follows NextContinuationToken across multiple pages', async () => {
-    mockReadState.mockResolvedValueOnce(EPOCH_STATE);
-
-    mockSend
-      // Page 1
-      .mockResolvedValueOnce({
-        Contents: [{ Key: 'incoming/page1.txt', LastModified: new Date() }],
-        IsTruncated: true,
-        NextContinuationToken: 'tok-abc',
-      })
-      .mockResolvedValueOnce({}) // CopyObject page1.txt
-      // Page 2
-      .mockResolvedValueOnce({
-        Contents: [{ Key: 'incoming/page2.txt', LastModified: new Date() }],
-        IsTruncated: false,
-      })
-      .mockResolvedValueOnce({}); // CopyObject page2.txt
-
-    const result = await runCopyJob();
-
-    expect(result.copied).toBe(2);
-    expect(mockWriteState).toHaveBeenCalledOnce();
+    await expect(runCopyJob(source, dest, makeStateStore())).rejects.toThrow('NetworkError');
   });
 
-  // ── state persistence ───────────────────────────────────────────────────────
+  // ── state persistence ───────────────────────────────────────────────────────────
 
   it('writes updated state with filesProcessed and a recent lastRunTimestamp', async () => {
     const before = Date.now();
-    mockReadState.mockResolvedValueOnce(EPOCH_STATE);
+    const stateStore = makeStateStore();
 
-    mockSend
-      .mockResolvedValueOnce({
-        Contents: [{ Key: 'incoming/file.txt', LastModified: new Date() }],
-        IsTruncated: false,
-      })
-      .mockResolvedValueOnce({});
+    await runCopyJob(
+      makeSource([{ key: 'file.txt', lastModified: new Date() }]),
+      makeDest(),
+      stateStore,
+    );
 
-    await runCopyJob();
-
-    expect(mockWriteState).toHaveBeenCalledOnce();
-    const [writtenState] = mockWriteState.mock.calls[0] as [SyncState];
-    expect(new Date(writtenState.lastRunTimestamp).getTime()).toBeGreaterThanOrEqual(before);
-    expect(writtenState.filesProcessed).toBe(1);
+    expect(stateStore.writeState).toHaveBeenCalledOnce();
+    const [written] = (stateStore.writeState as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      SyncState,
+    ];
+    expect(new Date(written.lastRunTimestamp).getTime()).toBeGreaterThanOrEqual(before);
+    expect(written.filesProcessed).toBe(1);
   });
 });
