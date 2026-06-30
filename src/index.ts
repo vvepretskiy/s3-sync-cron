@@ -54,7 +54,12 @@ const job = cron.schedule(
   },
 );
 
-logger.info({ schedule: config.cronSchedule }, 'Cron job scheduled — waiting for first tick');
+logger.info({ schedule: config.cronSchedule }, 'Cron job scheduled — running initial sync now');
+
+// Run immediately on startup so the first sync doesn't wait for the first tick
+inFlightJob = tick().finally(() => {
+  inFlightJob = null;
+});
 
 async function shutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
