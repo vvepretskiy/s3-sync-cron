@@ -1,6 +1,5 @@
-import { configSchema } from './configSchema';
-export type { Config } from './configSchema';
-import type { Config } from './configSchema';
+import { Config, configSchema } from './schemas/index';
+export type { Config } from './schemas/index';
 
 // Shared AWS fallback credentials from top-level env vars
 interface SharedAws {

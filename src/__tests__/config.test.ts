@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configSchema } from '../configSchema';
+import { configSchema } from '../schemas/index';
 
 const S3_SOURCE = {
   type: 's3' as const,

@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'fs/promises';
-import type { FileStateConfig } from '../configSchema';
+import type { FileStateConfig } from '../schemas/index';
 import { logger } from '../logger';
 import type { StateStore, SyncState } from '../types';
 

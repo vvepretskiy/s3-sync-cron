@@ -1,5 +1,5 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import type { S3StateConfig } from '../configSchema';
+import type { S3StateConfig } from '../schemas/index';
 import { logger } from '../logger';
 import type { StateStore, SyncState } from '../types';
 

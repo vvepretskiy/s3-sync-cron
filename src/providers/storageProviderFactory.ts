@@ -1,4 +1,4 @@
-import type { FtpProviderConfig, S3ProviderConfig } from '../configSchema';
+import type { FtpProviderConfig, S3ProviderConfig } from '../schemas/index';
 import type { StorageProvider } from '../types';
 import { FtpStorageProvider } from './ftpProvider';
 import { S3StorageProvider } from './s3Provider';

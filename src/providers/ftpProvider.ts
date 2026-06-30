@@ -1,6 +1,6 @@
 import { Client as FtpClient } from 'basic-ftp';
 import { Readable, Writable } from 'stream';
-import type { FtpProviderConfig } from '../configSchema';
+import type { FtpProviderConfig } from '../schemas/index';
 import type { FileEntry, StorageProvider } from '../types';
 
 export class FtpStorageProvider implements StorageProvider {

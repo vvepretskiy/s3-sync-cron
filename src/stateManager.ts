@@ -1,4 +1,4 @@
-import type { FileStateConfig, S3StateConfig } from './configSchema';
+import type { FileStateConfig, S3StateConfig } from './schemas/index';
 import { FileStateStore } from './stateStore/fileStateStore';
 import { S3StateStore } from './stateStore/s3StateStore';
 import type { StateStore } from './types';

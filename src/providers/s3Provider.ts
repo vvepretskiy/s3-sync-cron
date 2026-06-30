@@ -4,7 +4,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
-import type { S3ProviderConfig } from '../configSchema';
+import type { S3ProviderConfig } from '../schemas/index';
 import type { FileEntry, StorageProvider } from '../types';
 
 export class S3StorageProvider implements StorageProvider {
