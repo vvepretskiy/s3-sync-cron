@@ -6,18 +6,19 @@ import cron from 'node-cron';
 import { config } from './config';
 import { logger } from './logger';
 import { runCopyJob } from './copyJob';
+import { createStateStore } from './stateManager';
+import { createStorageProvider } from './providers/storageProviderFactory';
 
-// Log config keys on startup — credentials are redacted by pino
+const source = createStorageProvider(config.source);
+const dest = createStorageProvider(config.dest);
+const stateStore = createStateStore(config.state);
+
 logger.info(
   {
-    sourceBucket: config.sourceBucket,
-    sourcePrefix: config.sourcePrefix || '(root)',
-    destBucket: config.destBucket,
-    destPrefix: config.destPrefix || '(root)',
-    stateBucket: config.stateBucket,
-    stateKey: config.stateKey,
+    sourceType: config.source.type,
+    destType: config.dest.type,
+    stateType: config.state.type,
     cronSchedule: config.cronSchedule,
-    awsRegion: config.awsRegion,
   },
   's3-sync-cron starting',
 );
@@ -34,7 +35,7 @@ async function tick(): Promise<void> {
   logger.info('Cron tick — starting copy job');
 
   try {
-    await runCopyJob();
+    await runCopyJob(source, dest, stateStore);
   } catch (err: unknown) {
     logger.error({ err }, 'Copy job failed with unhandled error');
   }
@@ -98,9 +99,3 @@ async function shutdown(signal: string): Promise<void> {
 
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
-
-// Catch unhandled promise rejections — log and exit instead of silently ignoring
-process.on('unhandledRejection', (reason) => {
-  logger.fatal({ reason }, 'Unhandled promise rejection — exiting');
-  process.exit(1);
-});
