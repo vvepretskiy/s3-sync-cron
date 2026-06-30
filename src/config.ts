@@ -8,7 +8,7 @@ interface SharedAws {
   secretAccessKey: string | undefined;
 }
 
-type ProviderType = 's3' | 'ftp';
+type ProviderType = 's3' | 'ftp' | 'local';
 type StateType = 's3' | 'file';
 
 type EnvReader = (prefix: string, shared: SharedAws) => Record<string, unknown>;
@@ -36,6 +36,10 @@ const providerEnvReaders: Record<ProviderType, EnvReader> = {
     password: process.env[`${prefix}_FTP_PASSWORD`],
     basePath: process.env[`${prefix}_FTP_BASE_PATH`],
     secure: process.env[`${prefix}_FTP_SECURE`],
+  }),
+  local: (prefix) => ({
+    type: 'local',
+    basePath: process.env[`${prefix}_LOCAL_PATH`],
   }),
 };
 

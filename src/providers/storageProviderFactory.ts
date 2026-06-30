@@ -1,9 +1,10 @@
-import type { FtpProviderConfig, S3ProviderConfig } from '../schemas/index';
+import type { FtpProviderConfig, LocalProviderConfig, S3ProviderConfig } from '../schemas/index';
 import type { StorageProvider } from '../types';
 import { FtpStorageProvider } from './ftpProvider';
+import { LocalStorageProvider } from './localProvider';
 import { S3StorageProvider } from './s3Provider';
 
-export type ProviderConfig = S3ProviderConfig | FtpProviderConfig;
+export type ProviderConfig = S3ProviderConfig | FtpProviderConfig | LocalProviderConfig;
 
 /**
  * Implement this interface to register a new storage backend.
@@ -40,4 +41,8 @@ registerStorageProviderFactory('s3', {
 
 registerStorageProviderFactory('ftp', {
   create: (cfg) => new FtpStorageProvider(cfg as FtpProviderConfig),
+});
+
+registerStorageProviderFactory('local', {
+  create: (cfg) => new LocalStorageProvider(cfg as LocalProviderConfig),
 });
